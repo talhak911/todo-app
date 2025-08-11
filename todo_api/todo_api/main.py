@@ -13,10 +13,18 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from typing import Optional, Annotated
-import shutil
-from pathlib import Path
-from fastapi.staticfiles import StaticFiles
+import cloudinary
+import cloudinary.uploader
+from cloudinary.utils import cloudinary_url
+import tempfile
+import os
 
+# Cloudinary Configuration
+cloudinary.config(
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET")
+)
 
 # JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-here-change-this-in-production")
@@ -29,7 +37,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # Security scheme
 security = HTTPBearer()
 
-app = FastAPI(title="Todo API with Authentication")
+app = FastAPI(title="Todo API with Authentication and Cloudinary")
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,11 +46,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-
-# Create uploads directory
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
 
 # Utility functions
 def verify_password(plain_password, hashed_password):
@@ -60,6 +63,67 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def upload_image_to_cloudinary(file: UploadFile, user_id: int) -> str:
+    """Upload image to Cloudinary and return the URL"""
+    try:
+        # Validate file type
+        allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
+            )
+        
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_file.write(file.file.read())
+            temp_file_path = temp_file.name
+        
+        # Upload to Cloudinary
+        upload_result = cloudinary.uploader.upload(
+            temp_file_path,
+            folder="todo_images",  # Organize images in a folder
+            public_id=f"todo_{user_id}_{int(datetime.now().timestamp())}",
+            resource_type="image",
+            # Optional: Add transformations
+            # transformation=[{'width': 800, 'height': 600, 'crop': 'limit', 'quality': 'auto'}]
+        )
+        
+        # Clean up temporary file
+        os.unlink(temp_file_path)
+        
+        return upload_result['secure_url']
+    
+    except Exception as e:
+        # Clean up temporary file in case of error
+        if 'temp_file_path' in locals():
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to upload image: {str(e)}"
+        )
+
+def delete_image_from_cloudinary(image_url: str):
+    """Delete image from Cloudinary using the URL"""
+    try:
+        # Extract public_id from URL
+        # Cloudinary URLs format: https://res.cloudinary.com/{cloud_name}/image/upload/v{version}/{public_id}.{format}
+        url_parts = image_url.split('/')
+        filename_with_ext = url_parts[-1]
+        public_id = filename_with_ext.split('.')[0]
+        
+        # If the image is in a folder, we need to include the folder path
+        if 'todo_images/' in image_url:
+            public_id = f"todo_images/{public_id}"
+        
+        cloudinary.uploader.destroy(public_id)
+    except Exception as e:
+        # Log the error but don't fail the operation
+        print(f"Warning: Failed to delete image from Cloudinary: {str(e)}")
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     credentials_exception = HTTPException(
@@ -181,24 +245,7 @@ def add_todo(
             
             # Handle image upload if provided
             if image:
-                # Validate file type
-                allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-                if image.content_type not in allowed_types:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
-                    )
-                
-                # Generate unique filename
-                file_extension = image.filename.split(".")[-1]
-                filename = f"todo_{current_user.id}_{datetime.now().timestamp()}.{file_extension}"
-                file_path = UPLOAD_DIR / filename
-                
-                # Save file
-                with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(image.file, buffer)
-                
-                image_url = str(file_path)
+                image_url = upload_image_to_cloudinary(image, current_user.id)
             
             # Create todo
             todo = Todo(
@@ -245,6 +292,7 @@ def update_todo(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Not authorized to update this todo"
                 )
+            
             print("is completed ", is_completed)
             # Update fields if provided
             if title is not None:
@@ -256,27 +304,12 @@ def update_todo(
             
             # Handle image update
             if image:
-                # Validate file type
-                allowed_types = ["image/jpeg", "image/png", "image/gif", "image/webp"]
-                if image.content_type not in allowed_types:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
-                    )
+                # Delete old image from Cloudinary if exists
+                if todo.image_url:
+                    delete_image_from_cloudinary(todo.image_url)
                 
-                # Remove old image if exists
-                if todo.image_url and Path(todo.image_url).exists():
-                    Path(todo.image_url).unlink()
-                
-                # Save new image
-                file_extension = image.filename.split(".")[-1]
-                filename = f"todo_{current_user.id}_{datetime.now().timestamp()}.{file_extension}"
-                file_path = UPLOAD_DIR / filename
-                
-                with open(file_path, "wb") as buffer:
-                    shutil.copyfileobj(image.file, buffer)
-                
-                todo.image_url = str(file_path)
+                # Upload new image to Cloudinary
+                todo.image_url = upload_image_to_cloudinary(image, current_user.id)
             
             session.commit()
             return {"message": "Todo updated successfully"}
@@ -285,36 +318,6 @@ def update_todo(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to update todo: {e}"
             )
-
-# @app.put("/todos/{todo_id}/status")
-# def update_todo_status(
-#     todo_id: int,
-#     is_completed: bool,
-#     current_user: User = Depends(get_current_user)
-# ):
-#     with Session(engine) as session:
-#         try:
-#             todo = session.get(Todo, todo_id)
-#             if not todo:
-#                 raise HTTPException(
-#                     status_code=status.HTTP_404_NOT_FOUND,
-#                     detail="Todo not found"
-#                 )
-            
-#             if todo.user_id != current_user.id:
-#                 raise HTTPException(
-#                     status_code=status.HTTP_403_FORBIDDEN,
-#                     detail="Not authorized to update this todo"
-#                 )
-            
-#             todo.is_completed = is_completed
-#             session.commit()
-#             return {"message": "Todo status updated successfully"}
-#         except Exception as e:
-#             raise HTTPException(
-#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-#                 detail=f"Failed to update todo status: {e}"
-#             )
 
 @app.put("/todos/{todo_id}/status")
 def update_todo_status(
@@ -364,9 +367,9 @@ def delete_todo(todo_id: int, current_user: User = Depends(get_current_user)):
                     detail="Not authorized to delete this todo"
                 )
             
-            # Remove image file if exists
-            if todo.image_url and Path(todo.image_url).exists():
-                Path(todo.image_url).unlink()
+            # Remove image from Cloudinary if exists
+            if todo.image_url:
+                delete_image_from_cloudinary(todo.image_url)
             
             session.delete(todo)
             session.commit()
@@ -376,18 +379,6 @@ def delete_todo(todo_id: int, current_user: User = Depends(get_current_user)):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to delete todo: {e}"
             )
-
-# Image serving endpoint
-@app.get("/images/{filename}")
-def get_image(filename: str):
-    from fastapi.responses import FileResponse
-    file_path = UPLOAD_DIR / filename
-    if not file_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Image not found"
-        )
-    return FileResponse(file_path)
 
 def start():
     create_tables()

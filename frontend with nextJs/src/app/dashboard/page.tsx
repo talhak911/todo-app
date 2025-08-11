@@ -394,7 +394,7 @@ export default function TodoPage() {
                     {todo.image_url && (
                       <div className="mb-3">
                         <img
-                          src={`${API_BASE}/${todo.image_url}`}
+                          src={todo.image_url}
                           alt={todo.title}
                           className="w-20 h-20 rounded-lg object-cover border border-gray-200"
                         />
