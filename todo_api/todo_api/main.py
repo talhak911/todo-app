@@ -380,6 +380,9 @@ def delete_todo(todo_id: int, current_user: User = Depends(get_current_user)):
                 detail=f"Failed to delete todo: {e}"
             )
 
-def start():
-    create_tables()
-    uvicorn.run("todo_api.main:app", reload=True, host="127.0.0.1", port=8080)
+# def start():
+#     create_tables()
+#     uvicorn.run("todo_api.main:app", reload=True, host="127.0.0.1", port=8080)
+
+# if __name__ == "__main__":
+#     start()
