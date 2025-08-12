@@ -25,7 +25,7 @@ interface CreateTodoData {
 }
 
 export default function TodoPage() {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, logout } = useAuth();
   const [todos, setTodos] = useState<Todo[]>([]);
   const [formData, setFormData] = useState<CreateTodoData>({
     title: "",
@@ -34,6 +34,7 @@ export default function TodoPage() {
   });
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [todosLoading, setTodosLoading] = useState(false);
 
   const fetchTodos = async () => {
     // Mock implementation - replace with actual API call
@@ -41,6 +42,7 @@ export default function TodoPage() {
     if (!token) return;
 
     try {
+      setTodosLoading(true);
       const res = await fetch(`${API_BASE}/todos`, {
         headers: { Authorization: `Bearer ${token}` },
       });
@@ -51,14 +53,16 @@ export default function TodoPage() {
     } catch (err) {
       console.error(err);
       // toast.error("Could not load todos");
+    } finally {
+      setTodosLoading(false);
     }
   };
 
   useEffect(() => {
-    if (isAuthenticated) {
+    if (isAuthenticated && !authLoading) {
       fetchTodos();
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, authLoading]);
 
   const handleInputChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
@@ -102,9 +106,11 @@ export default function TodoPage() {
 
       if (!res.ok) throw new Error("Failed to create todo");
       const newTodo = await res.json();
+      console.log("data, ", newTodo);
       setTodos((prev) => [newTodo, ...prev]);
       setFormData({ title: "", description: "", image: undefined });
       toast.success("Todo added successfully!");
+      setShowForm(false); // Close form after successful submission
     } catch (err) {
       console.error(err);
       toast.error("Error adding todo");
@@ -160,16 +166,31 @@ export default function TodoPage() {
       toast.error("Error deleting todo");
     }
   };
+
+  // Show loading spinner while auth is being verified
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="bg-white p-8 rounded-2xl shadow-lg">
+          <div className="flex items-center justify-center gap-3">
+            <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+            <p className="text-gray-600 text-lg">Loading...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login prompt if not authenticated
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
         <div className="bg-white p-8 rounded-2xl shadow-lg">
-          <p className="text-gray-600 text-lg">
+          <p className="text-gray-600 text-lg mb-4">
             Please log in to see your todos.
           </p>
-
           <Link
-            className="py-1 px-2 bg-green-500 text-white rounded-md mt-2 mx-auto block text-center"
+            className="py-2 px-4 bg-green-500 text-white rounded-md hover:bg-green-600 transition-colors mx-auto block text-center"
             href={"/login"}
           >
             Login
@@ -186,7 +207,7 @@ export default function TodoPage() {
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50">
       <div>
         <button
-          className="absolute right-4 top-3 bg-red-600 px-2 py-1 rounded-md text-white"
+          className="absolute right-4 top-3 bg-red-600 px-2 py-1 rounded-md text-white hover:bg-red-700 transition-colors"
           onClick={logout}
         >
           Logout
@@ -331,7 +352,14 @@ export default function TodoPage() {
 
         {/* Todos List */}
         <div className="space-y-4">
-          {todos.length === 0 ? (
+          {todosLoading ? (
+            <div className="text-center py-12">
+              <div className="flex items-center justify-center gap-3">
+                <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                <p className="text-gray-600 text-lg">Loading your todos...</p>
+              </div>
+            </div>
+          ) : todos.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-24 h-24 mx-auto mb-4 bg-gray-100 rounded-full flex items-center justify-center">
                 <CheckCircle className="w-12 h-12 text-gray-400" />
@@ -419,28 +447,27 @@ export default function TodoPage() {
                     </div>
                   </div>
 
-                  {/* Action Button */}
-                  <button
-                    onClick={() =>
-                      handleToggleStatus(todo.id, todo.is_completed)
-                    }
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 ${
-                      todo.is_completed
-                        ? "bg-orange-100 text-orange-700 hover:bg-orange-200"
-                        : "bg-green-100 text-green-700 hover:bg-green-200"
-                    }`}
-                  >
-                    Mark as {todo.is_completed ? "Pending" : "Complete"}
-                  </button>
-                  <button
-                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 
-                bg-orange-100 text-orange-700 hover:bg-orange-200
-                    
-                    `}
-                    onClick={() => handleDelete(todo.id)}
-                  >
-                    Delete
-                  </button>
+                  {/* Action Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        handleToggleStatus(todo.id, todo.is_completed)
+                      }
+                      className={`px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 ${
+                        todo.is_completed
+                          ? "bg-orange-100 text-orange-700 hover:bg-orange-200"
+                          : "bg-green-100 text-green-700 hover:bg-green-200"
+                      }`}
+                    >
+                      Mark as {todo.is_completed ? "Pending" : "Complete"}
+                    </button>
+                    <button
+                      className="px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:scale-105 bg-red-100 text-red-700 hover:bg-red-200"
+                      onClick={() => handleDelete(todo.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))
