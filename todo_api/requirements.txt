@@ -41,12 +41,11 @@ sniffio==1.3.1
 SQLAlchemy==2.0.30
 sqlmodel==0.0.18
 starlette==0.37.2
--e git+https://github.com/talhak911/todo-app.git@3dec43a99bb2a53a7a034ff55dacda80bfd51cbe#egg=todo_api&subdirectory=todo_api
+-e git+https://github.com/talhak911/todo-app.git@47936d12b47605b71183d537569551ba536c4431#egg=todo_api&subdirectory=todo_api
 typer==0.12.3
 typing_extensions==4.11.0
 ujson==5.9.0
 urllib3==2.5.0
 uvicorn==0.35.0
-uvloop==0.19.0
 watchfiles==0.21.0
 websockets==12.0
