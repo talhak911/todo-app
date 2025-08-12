@@ -157,6 +157,10 @@ def authenticate_user(username: str, password: str):
             return False
         return user
 
+@app.get("/")
+def root():
+    return {"message": "Api is running!"}
+
 # Authentication endpoints
 @app.post("/signup")
 def signup(user: UserCreate):
